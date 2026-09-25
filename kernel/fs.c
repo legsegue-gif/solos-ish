@@ -1367,6 +1367,12 @@ dword_t sys_sendfile64(fd_t out_fd, fd_t in_fd, addr_t offset_addr, dword_t coun
 
         if (nwritten < nread)
             break;
+        // Solos: return after a short read, as Linux does. Looping on
+        // reads from a terminal consumed its end-of-file (the next read
+        // returned 0 here, so the caller got the bytes before it but never
+        // the 0): `cat > file` never ended on Ctrl-D.
+        if ((size_t) nread < chunk)
+            break;
     }
 
     if (offset_addr != 0) {

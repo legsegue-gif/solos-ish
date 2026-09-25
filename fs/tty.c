@@ -472,6 +472,11 @@ static ssize_t tty_read(struct fd *fd, void *buf, size_t bufsize) {
             goto out;
     }
 
+    // Whether this read ends at an end-of-file mark, which is then consumed.
+    // Solos: upstream removed an EOF mark whenever one was next in the buffer
+    // after a read, which also swallowed a Ctrl-D typed after a complete line
+    // ("abc\n" then ^D): `cat` never saw its end of file.
+    bool ends_at_eof = false;
     // wait loop(s)
     if (tty->termios.lflags & ICANON_) {
         size_t canon_size;
@@ -487,11 +492,15 @@ static ssize_t tty_read(struct fd *fd, void *buf, size_t bufsize) {
                 goto error;
         }
         // null byte means eof was typed
-        if (tty->buf[canon_size-1] == '\0')
+        if (tty->buf[canon_size-1] == '\0') {
             canon_size--;
+            ends_at_eof = true;
+        }
 
-        if (bufsize > canon_size)
+        if (bufsize >= canon_size)
             bufsize = canon_size;
+        else
+            ends_at_eof = false;
     } else {
         dword_t min = tty->termios.cc[VMIN_];
         dword_t time = tty->termios.cc[VTIME_];
@@ -523,7 +532,7 @@ static ssize_t tty_read(struct fd *fd, void *buf, size_t bufsize) {
     if (bufsize > tty->bufsize)
         bufsize = tty->bufsize;
     tty_read_into_buf(tty, buf, bufsize);
-    if (tty->bufsize > 0 && tty->buf[0] == '\0' && tty->buf_flag[0]) {
+    if (ends_at_eof && tty->bufsize > 0 && tty->buf[0] == '\0' && tty->buf_flag[0]) {
         // remove the eof so the next read can succeed
         char dummy;
         tty_read_into_buf(tty, &dummy, 1);
