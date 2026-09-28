@@ -15,6 +15,12 @@ configured author and committer identities are checked as well. Reports mask
 the address. File contents are not checked for emails (upstream iSH credits
 its contributors by address).
 
+On this machine (not in CI) it also refuses this machine's private values in
+contents, paths and messages: the home directory's path, and the app ID,
+bundle ID prefix and team ID set in ios/Config/Local.xcconfig (untracked).
+They are read at run time and never written anywhere; they cannot be
+allowlisted.
+
     namecheck tree              tracked files in the working tree
     namecheck staged            the index (pre-commit)
     namecheck msg FILE          a commit message (commit-msg)
@@ -53,6 +59,27 @@ NOREPLY = re.compile(
 ZERO = "0" * 40
 
 
+def private_values():
+    values = []
+    home = os.path.expanduser("~")
+    if not os.environ.get("CI") and home.count("/") >= 2:
+        values.append(home)
+    local = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "ios", "Config", "Local.xcconfig")
+    if os.path.exists(local):
+        with open(local, encoding="utf-8") as f:
+            for line in f:
+                m = re.match(r"\s*(APP_BUNDLE_ID|BUNDLE_ID_PREFIX|DEVELOPMENT_TEAM)\s*=\s*(\S+)", line)
+                if m and not m.group(2).startswith("com.example"):
+                    values.append(m.group(2))
+    if not values:
+        return None
+    return re.compile(b"|".join(re.escape(v.encode()) for v in values), re.IGNORECASE)
+
+
+PRIVATE = private_values()
+
+
 def git(*args, cwd=None, input=None):
     return subprocess.run(
         ["git", *args], cwd=cwd, input=input, check=True, capture_output=True
@@ -85,10 +112,22 @@ class Scan:
         where = PATTERN.sub(MASK, where.encode()).decode("utf-8", "replace")
         print(f"{where}: {shown}{extra}")
 
+    def private(self, where, data):
+        """This machine's private values: no allowlist, never shown."""
+        if PRIVATE is None:
+            return
+        for n, line in enumerate(data.split(b"\n"), 1):
+            if PRIVATE.search(line):
+                self.hits += 1
+                print(f"{where}:{n}: contains a private value of this machine "
+                      "(home path, app ID or team ID)")
+                return
+
     def text(self, where, data):
         """A message, identity or ref name: no allowlist."""
         if isinstance(data, str):
             data = data.encode()
+        self.private(where, data)
         for line in data.splitlines():
             if PATTERN.search(line):
                 self.report(where, line)
@@ -105,10 +144,14 @@ class Scan:
                 print(f"{where}: not a noreply email: {masked}")
 
     def path(self, where, path):
+        self.private(f"{where}: path", path.encode())
         if PATTERN.search(path.encode()):
             self.report(f"{where}: path", path.encode())
 
     def content(self, where, path, data):
+        self.private(where, data)
+        if b"\0" in data:
+            self.private(f"{where} (utf-16)", data.replace(b"\0", b""))
         variants = [(data, "")]
         if b"\0" in data:
             # UTF-16 strings in binaries and resources.
@@ -304,7 +347,8 @@ def main():
     note = f" ({scan.allowed} allowlisted)" if scan.allowed else ""
     if scan.hits:
         print(f"namecheck: {scan.hits} hit(s){note}. Write \"the reference app\" for the"
-              " name; use the GitHub noreply address for email.", file=sys.stderr)
+              " name; use the GitHub noreply address for email; keep this machine's"
+              " paths and IDs in untracked files.", file=sys.stderr)
         sys.exit(1)
     if os.environ.get("NAMECHECK_VERBOSE"):
         print(f"namecheck: clean{note}", file=sys.stderr)
