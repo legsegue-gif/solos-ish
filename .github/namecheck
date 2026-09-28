@@ -8,7 +8,8 @@ file and directory paths, commit messages, author and committer names and
 emails, and pushed ref names. The name is matched case-insensitively as a
 whole word (so an environment variable or path segment built on it counts),
 and with the "open" prefix; ordinary words that merely contain the same
-letters do not count. Author, committer and tagger emails, and any address
+letters do not count. Retired names (RETIRED below) are refused the same
+way. Author, committer and tagger emails, and any address
 in a commit message (trailers included), must be GitHub noreply addresses
 (...@users.noreply.github.com) or noreply@anthropic.com; at commit time the
 configured author and committer identities are checked as well. Reports mask
@@ -51,6 +52,10 @@ PATTERN = re.compile(
     re.IGNORECASE,
 )
 MASK = b"<name>"
+# Retired names, spelled so this file does not match itself.
+RETIRED = [b"p" + b"solos\\d*", b"old" + b" project"]
+PATTERN = re.compile(PATTERN.pattern + b"|(?<![a-z])(?:" + b"|".join(RETIRED) + b")(?![a-z])",
+                     re.IGNORECASE)
 EMAIL = re.compile(rb"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 NOREPLY = re.compile(
     rb"[A-Za-z0-9._%+-]+@users\.noreply\.github\.com|noreply@anthropic\.com",
