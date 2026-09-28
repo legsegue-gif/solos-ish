@@ -20,7 +20,7 @@
 // True for an offload whose name is also a REAL program users install
 // themselves (ffmpeg, ffprobe). Only these get the strict rules below.
 //
-// Every other offload (apple-*, solos-*) is App-only: there is no genuine
+// Every other offload (apple-*, solos-*) is app-only: there is no genuine
 // binary of that name for a user to be running instead, and in fact no file
 // behind it at all — the offload IS the command. Restricting where those may
 // be exec'd from, or letting an env var turn them off, would just make the
