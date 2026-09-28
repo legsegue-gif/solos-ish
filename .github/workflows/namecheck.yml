@@ -1,0 +1,17 @@
+name: namecheck
+
+# Nothing pushed may name the reference app. .github/namecheck is a copy of
+# the Solos repo's tools/namecheck.
+on:
+  push:
+  pull_request:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan every commit
+        run: python3 .github/namecheck commits --all HEAD
