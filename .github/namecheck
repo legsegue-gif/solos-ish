@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
-"""Refuses the reference app's name in anything a commit or push carries.
+"""Refuses the reference app's name in anything a commit or push carries,
+and any email address other than a noreply one in commit identities and
+messages.
 
 What is checked: file contents (text and binary, including UTF-16 strings),
 file and directory paths, commit messages, author and committer names and
 emails, and pushed ref names. The name is matched case-insensitively as a
 whole word (so an environment variable or path segment built on it counts),
 and with the "open" prefix; ordinary words that merely contain the same
-letters do not count.
+letters do not count. Author, committer and tagger emails, and any address
+in a commit message (trailers included), must be GitHub noreply addresses
+(...@users.noreply.github.com) or noreply@anthropic.com; at commit time the
+configured author and committer identities are checked as well. Reports mask
+the address. File contents are not checked for emails (upstream iSH credits
+its contributors by address).
 
     namecheck tree              tracked files in the working tree
     namecheck staged            the index (pre-commit)
@@ -38,6 +45,11 @@ PATTERN = re.compile(
     re.IGNORECASE,
 )
 MASK = b"<name>"
+EMAIL = re.compile(rb"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+NOREPLY = re.compile(
+    rb"[A-Za-z0-9._%+-]+@users\.noreply\.github\.com|noreply@anthropic\.com",
+    re.IGNORECASE,
+)
 ZERO = "0" * 40
 
 
@@ -80,6 +92,17 @@ class Scan:
         for line in data.splitlines():
             if PATTERN.search(line):
                 self.report(where, line)
+
+    def emails(self, where, data):
+        """Identities and messages: only noreply addresses."""
+        if isinstance(data, str):
+            data = data.encode()
+        for line in data.splitlines():
+            bad = [m for m in EMAIL.findall(line) if not NOREPLY.fullmatch(m)]
+            if bad:
+                self.hits += 1
+                masked = ", ".join(m[:1].decode() + "***@***" for m in bad)
+                print(f"{where}: not a noreply email: {masked}")
 
     def path(self, where, path):
         if PATTERN.search(path.encode()):
@@ -153,6 +176,10 @@ def scan_tree(scan, cwd):
 
 
 def scan_staged(scan, cwd):
+    for var in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
+        ident = git("var", var, cwd=cwd).rsplit(b" ", 2)[0]
+        scan.text(f"configured {var[4:-6].lower()}", ident)
+        scan.emails(f"configured {var[4:-6].lower()}", ident)
     out = git("diff", "--cached", "--name-status", "-z", "--no-renames",
               "--diff-filter=ACMRT", cwd=cwd)
     fields = [f.decode("utf-8", "replace") for f in out.split(b"\0") if f]
@@ -181,8 +208,13 @@ def scan_commits(scan, cwd, revs):
         for line in head.split(b"\n"):
             if line.startswith((b"author ", b"committer ", b"tagger ")):
                 ident = line.rsplit(b" ", 2)[0]
-                scan.text(f"commit {short} {line.split(b' ')[0].decode()}", ident)
+                kind = line.split(b" ")[0].decode()
+                scan.text(f"commit {short} {kind}", ident)
+                scan.emails(f"commit {short} {kind}", ident)
+            elif line.startswith((b"gpgsig", b"mergetag")):
+                scan.report(f"commit {short}", b"signed or merged-tag commit: check by hand")
         scan.text(f"commit {short} message", message)
+        scan.emails(f"commit {short} message", message)
     objs = git("rev-list", "--objects", "--stdin", cwd=cwd,
                input="\n".join(revs).encode())
     entries = []
@@ -262,6 +294,7 @@ def main():
         with open(rest[0], "rb") as f:
             msg = b"\n".join(l for l in f.read().split(b"\n") if not l.startswith(b"#"))
         scan.text("commit message", msg)
+        scan.emails("commit message", msg)
     elif cmd == "commits":
         scan_commits(scan, cwd, rest)
     elif cmd == "prepush" and rest:
@@ -270,8 +303,8 @@ def main():
         sys.exit(__doc__)
     note = f" ({scan.allowed} allowlisted)" if scan.allowed else ""
     if scan.hits:
-        print(f"namecheck: {scan.hits} hit(s){note}. Write \"the reference app\" instead.",
-              file=sys.stderr)
+        print(f"namecheck: {scan.hits} hit(s){note}. Write \"the reference app\" for the"
+              " name; use the GitHub noreply address for email.", file=sys.stderr)
         sys.exit(1)
     if os.environ.get("NAMECHECK_VERBOSE"):
         print(f"namecheck: clean{note}", file=sys.stderr)
