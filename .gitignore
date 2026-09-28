@@ -24,3 +24,6 @@ bench/
 tools/prebuilt_gadget_gen/__pycache__/
 tools/prebuilt_gadget_gen/*.bak
 .cache/
+
+# deps/build_ish.sh builds here, one folder per SDK
+build-*/
