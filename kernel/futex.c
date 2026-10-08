@@ -197,6 +197,7 @@ static int futex_wait(addr_t uaddr, dword_t val, struct timespec *timeout) {
         }
 
         current->blocking = true;
+        __atomic_store_n(&current->untimed_futex_wait, timeout == NULL, __ATOMIC_RELAXED);
         int stall_count = 0;
         struct pollfd pfd = { .fd = current->futex_pipe[0], .events = POLLIN };
         for (;;) {
@@ -296,15 +297,23 @@ static int futex_wait(addr_t uaddr, dword_t val, struct timespec *timeout) {
                     unlock(&pids_lock);
                 }
             }
-            // Safety valve: continuous infinite futex stall > 180s.
+            // Safety valve: continuous infinite futex stall > 180s, for V8's
+            // exit hangs (a thread joining a worker that waits forever). It
+            // applies only when every thread is in an untimed futex wait:
+            // Node parks its idle workers that way all the time, and ending
+            // the process for that killed every Node program after three
+            // minutes (an MCP server, a long `npx` install), with exit 0.
             if (timeout == NULL && stall_count >= 1800) { // 1800 * 100ms = 180s
                 bool has_live_children = false;
+                bool all_untimed = true;
                 int live = 0;
                 lock(&pids_lock);
                 lock(&current->group->lock);
                 struct task *t;
                 list_for_each_entry(&current->group->threads, t, group_links) {
                     live++;
+                    if (!__atomic_load_n(&t->untimed_futex_wait, __ATOMIC_RELAXED))
+                        all_untimed = false;
                     struct task *child;
                     list_for_each_entry(&t->children, child, siblings) {
                         if (child->group == current->group)
@@ -315,7 +324,7 @@ static int futex_wait(addr_t uaddr, dword_t val, struct timespec *timeout) {
                 }
                 unlock(&current->group->lock);
                 unlock(&pids_lock);
-                if (live > 1 && !has_live_children) {
+                if (live > 1 && !has_live_children && all_untimed) {
                     if (ish_exec_trace())
                         printk("SAFETY-VALVE[futex]: pid=%d stalled %ds in futex_wait(uaddr=0x%x val=%d), %d threads, no children → exit_group\n",
                                current->pid, stall_count / 10, uaddr, val, live);
@@ -338,6 +347,7 @@ static int futex_wait(addr_t uaddr, dword_t val, struct timespec *timeout) {
             }
         }
         current->blocking = false;
+        __atomic_store_n(&current->untimed_futex_wait, false, __ATOMIC_RELAXED);
 
         // Remove from queue (pipe stays open for reuse)
         lock(&futex_lock);

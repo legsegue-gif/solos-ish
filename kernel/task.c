@@ -70,6 +70,7 @@ struct task *task_create_(struct task *parent) {
     *task = (struct task) {};
     if (parent != NULL)
         *task = *parent;
+    task->untimed_futex_wait = false;
     task->pid = pid->id;
     pid->task = task;
 

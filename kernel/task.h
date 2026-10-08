@@ -50,6 +50,10 @@ struct task {
     // Set when thread is in a blocking syscall (futex_wait, poll_wait, etc.)
     // Used for deadlock detection: if all threads are blocking, it's a hang.
     bool blocking;
+    // Set while in futex_wait with no timeout. The futex safety valve ends a
+    // process only when every thread is in one: an idle process (Node's
+    // workers parked, its main thread in epoll_wait) is not a hang.
+    bool untimed_futex_wait;
     // Per-thread pipe for futex_wait wakeup (reused across calls to avoid
     // pipe creation overhead in Go runtime spin loops)
     int futex_pipe[2]; // [0]=read, [1]=write; -1 if not yet created
