@@ -969,10 +969,20 @@ dword_t sys_execve(addr_t filename_addr, addr_t argv_addr, addr_t envp_addr) {
                 "--require=/lib/wasm-polyfill.js",    // WebAssembly shim (must load first)
                 "--require=/lib/fetch-polyfill.js",   // fetch() via native http/https
             };
-            const char *inject_args[16]; // base args + optional requires
+            const char *inject_args[16]; // base args, seed, optional requires
             size_t inject_count = 0;
             for (size_t i = 0; i < sizeof(inject_args_base)/sizeof(inject_args_base[0]); i++)
                 inject_args[inject_count++] = inject_args_base[i];
+            // --predictable fixes V8's random seed, so Math.random() gave the
+            // same numbers in every Node process (0.14617804087311326 first,
+            // each time). npm names its temporary files from it, so each run
+            // reused the names of the last: EEXIST in ~/.npm/_cacache/tmp
+            // and ENOTEMPTY renaming node_modules/.<pkg>-<same suffix>. A seed
+            // of its own for each process; one the program is given comes
+            // later in argv and wins.
+            char seed_arg[32];
+            snprintf(seed_arg, sizeof(seed_arg), "--random-seed=%u", (unsigned) (arc4random_uniform(2147483646u) + 1));
+            inject_args[inject_count++] = seed_arg;
             for (size_t i = 0; i < sizeof(optional_requires)/sizeof(optional_requires[0]); i++) {
                 // Extract path after "--require="
                 const char *path = optional_requires[i] + 10; // strlen("--require=")
